@@ -118,7 +118,7 @@ void setup() {
   loadingScreen();
   lcd.clear();
   
-  currentTempUI = updateTemp();
+  currentTempUI = getTemp();
   
   pinMode(switchPinPowL, OUTPUT);
   pinMode(switchPinDirL, OUTPUT);
@@ -143,7 +143,7 @@ void setup() {
   Serial.begin(9600);
   updateButtonAndHallSensorVars();
   int buttonPressed = checkButtons();
-  buttonActionsUI(buttonPressed);
+  determineUIScreen(buttonPressed);
   runUIScreen(buttonPressed);
   lidOpenL = currentHallSensorLBot!=LOW;
   /*
@@ -163,19 +163,34 @@ void loop()
 {
       updateButtonAndHallSensorVars();
       int buttonPressed = checkButtons();
-      buttonActionsUI(buttonPressed);
+      determineUIScreen(buttonPressed);
       runUIScreen(buttonPressed);
     
       if(screenState<1)
         {
-          int tempAction = checkTime();
+          int action = checkIfItIsTime();
           int temp;
-          if (tempAction!=0)
-            temp = updateTemp();
-          if (tempAction%2==1)
+          if (action!=0)
+            temp = getTemp();
+          if (action%2==1)
             currentTempUI = temp;
-          if (tempAction>=2)
-            moveWinchesIfTempChanged(temp);
+          if (action>=2)
+            {
+              int winchAction = checkIfWinchShouldMove(temp);
+              if(winchAction == 1)
+                {
+                  makeWarningSound();
+                  moveWinchAuto(LEFT, DOWN);
+                  //moveWinchAuto(RIGHT, DOWN);
+                }
+              else if(winchAction == 2)
+                {
+                  makeWarningSound();
+                  moveWinchAuto(LEFT, UP);
+                  //moveWinchAuto(RIGHT, UP);
+                }
+            
+            }
         }
 
         
@@ -275,7 +290,7 @@ boolean debounce(boolean last, int button) {
  * Outputs: none
  * Global Vars Updated: screenOnOffCount, subScreen, tempThreshold, hysteresis, manOv, whichWinch, screenState
  */
-void buttonActionsUI(int button) 
+void determineUIScreen(int button) 
 {
   if(button==0)
     return;
@@ -494,7 +509,7 @@ void runLidStateScreen()
  * Outputs: int action (can be 0,1,2,3 and determines if UI temp should be updated or if the temp Threshold should be checked)
  * Global Vars Updated: currentMillis, currentMillis2, previousMillis, previousMillis2
  */
-int checkTime() 
+int checkIfItIsTime() 
 {
   currentMillis = millis();
   currentMillis2 = currentMillis;
@@ -520,7 +535,7 @@ int checkTime()
  * Outputs: int tempF (temp. in fahrenheit)
  * Global Vars Updated: none
 */
-int updateTemp()
+int getTemp()
 {
   Serial.print("Requesting temperatures...");
   sensors.requestTemperatures();
@@ -552,20 +567,14 @@ int convertTempToF(double tempC)
  * Outputs: none
  * Global Vars Updated: whichWinch
 */
-void moveWinchesIfTempChanged(int temp)
+int checkIfWinchShouldMove(int temp)
 {
   if (abs(tempThreshold - temp) > hysteresis && temp < tempThreshold && lidOpenL)// && lidOpenR)
-    {
-      makeWarningSound();
-      moveWinchAuto(LEFT, DOWN);
-      //moveWinchAuto(RIGHT, DOWN);
-    }
+      return 1;
   else if (abs(tempThreshold - temp) > hysteresis && temp > tempThreshold && !lidOpenL)// && !lidOpenR)
-    {
-      makeWarningSound();
-      moveWinchAuto(LEFT, UP);
-      //moveWinchAuto(RIGHT, UP);
-    }
+      return 2;
+ 
+  return 0;
 }
 
 /*
@@ -608,7 +617,7 @@ void moveWinchManual(boolean winch, boolean dir)
           if(mainBoardTemp()>maxBoardTemp)
             break;
            */
-          //Serial.println(updateTemp());
+          //Serial.println(getTemp());
           Serial.print("Amps: ");
           Serial.println(measureCurrent());
         }
@@ -684,7 +693,7 @@ void moveWinchAuto(boolean winch, boolean dir)
       if(mainBoardTemp()>maxBoardTemp)
         break;
        */
-      //Serial.println(updateTemp());
+      //Serial.println(getTemp());
       Serial.print("Amps: ");
       Serial.println(measureCurrent());
     }
