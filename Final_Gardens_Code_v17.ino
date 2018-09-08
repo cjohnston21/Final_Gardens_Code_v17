@@ -165,9 +165,21 @@ void loop()
       int buttonPressed = checkButtons();
       determineUIScreen(buttonPressed);
       runUIScreen(buttonPressed);
-    
+
+     
+      
       if(screenState<1)
         {
+           lidOpenR = lidOpenL;
+           if(!lidOpenL && !lidOpenR && (currentHallSensorLBot!=LOW)) //|| currentHallSensorRBot!=LOW))
+            {
+              runErrorProtocolScreen();
+            }
+            else if(lidOpenL && lidOpenR && (currentHallSensorLTop!=LOW)) //|| currentHallSensorRTop!=LOW))
+            {
+              runErrorProtocolScreen();
+            }
+          
           int action = checkIfItIsTime();
           int temp;
           if (action!=0)
@@ -495,6 +507,26 @@ void runLidStateScreen()
     lcd.print("Open            ");
   else
     lcd.print("Closed          ");
+}
+
+void runErrorProtocolScreen()
+{
+  lcd.setCursor(0, 0);
+  lcd.print("ERROR: LID STATE");
+  lcd.setCursor(0,1);
+  lcd.print("!= FRAME SENSOR ");
+  while(currentButtonStateHome==LOW)
+  {
+    updateButtonAndHallSensorVars();
+    /*
+    if(currentHallSensorLBot==LOW && !lidOpenL && !lidOpenR)
+      break;
+    if(currentHallSensorLTop==LOW && lidOpenL && lidOpenR)
+      break;
+      */
+  }
+  screenState = 1;
+  delay(100);
 }
 
 
