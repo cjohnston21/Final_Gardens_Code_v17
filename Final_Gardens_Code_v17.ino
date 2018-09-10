@@ -1,4 +1,3 @@
-//hey you
 // Libraries
 #include<OneWire.h>
 #include<DallasTemperature.h>
@@ -782,5 +781,3 @@ void moveWinchAuto(boolean winch, boolean dir)
   double amps = ((512 - sensorValue)*75.75/1023);
   return amps;
 }
-
-
