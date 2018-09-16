@@ -558,11 +558,7 @@ void runErrorProtocolLidState()
     if(currentHallSensorLBot==LOW && !lidOpenL && !lidOpenR)
       break;
     if(currentHallSensorLTop==LOW && lidOpenL && lidOpenR)
-      {
-        Serial.println("yes");
         break;
-      }
-    Serial.println("no");
   }
 
   if(currentButtonStateHome==HIGH && lastButtonStateHome==LOW)
