@@ -68,7 +68,7 @@ boolean screenOff = false;
 int screenState = 0;
 boolean subScreen = false;
 boolean whichWinch = LEFT;
-int numScreens = 5;
+int numScreens = 6;
 boolean autoMode = true;
 
 
@@ -166,18 +166,19 @@ void loop()
       determineUIScreen(buttonPressed);
       runUIScreen(buttonPressed);
 
-     
       
       if(screenState<1)
         {
            lidOpenR = lidOpenL;
            if(!lidOpenL && !lidOpenR && (currentHallSensorLBot!=LOW)) //|| currentHallSensorRBot!=LOW))
             {
-              runErrorProtocolScreen();
+              runErrorProtocolLidState();
+              return;
             }
             else if(lidOpenL && lidOpenR && (currentHallSensorLTop!=LOW)) //|| currentHallSensorRTop!=LOW))
             {
-              runErrorProtocolScreen();
+              runErrorProtocolLidState();
+              return;
             }
           
           int action = checkIfItIsTime();
@@ -193,12 +194,14 @@ void loop()
                 {
                   makeWarningSound();
                   moveWinchAuto(LEFT, DOWN);
+                  //delay(100);
                   //moveWinchAuto(RIGHT, DOWN);
                 }
               else if(winchAction == 2)
                 {
                   makeWarningSound();
                   moveWinchAuto(LEFT, UP);
+                  //delay(100);
                   //moveWinchAuto(RIGHT, UP);
                 }
             
@@ -289,6 +292,7 @@ boolean debounce(boolean last, int button) {
         button=4;
         multiple+=4;
       }
+      
    if(button==multiple)
       return button;
    else
@@ -379,6 +383,13 @@ void runUIScreen(int button)
     } 
   else if (screenState == 4)
      runLidStateScreen();
+  else if (screenState == 5)
+    {
+      if(subScreen)
+        runChangeMaxAmps(button);
+      else
+        runChangeMaxAmpsScreen();
+    }
 }
 
 
@@ -440,7 +451,7 @@ void runChangeTempThresh(int button)
   lcd.setCursor(0, 0);
   lcd.print("Temp. Threshold:");
   lcd.setCursor(0, 1);
-  lcd.print(String(tempThreshold) + " degrees       ");
+  lcd.print(String(tempThreshold) + " F             ");
 }
 
 void runManualModeScreen()
@@ -509,23 +520,72 @@ void runLidStateScreen()
     lcd.print("Closed          ");
 }
 
-void runErrorProtocolScreen()
+void runChangeMaxAmpsScreen()
+{
+  lcd.setCursor(0, 0);
+  lcd.print("Change Max Amps ");
+  lcd.setCursor(0, 1);
+  lcd.print("                ");
+}
+
+void runChangeMaxAmps(int button)
+{
+  if(button==3)
+    maxAmps=maxAmps-0.25;
+  else if (button==4)
+    maxAmps=maxAmps+0.25;
+  else if (button==1)
+    subScreen = false;
+    
+  lcd.setCursor(0, 0);
+  lcd.print("Max Amps Allowed");
+  lcd.setCursor(0, 1);
+  lcd.print(String(maxAmps) + " amps           ");
+}
+
+void runErrorProtocolLidState()
 {
   lcd.setCursor(0, 0);
   lcd.print("ERROR: LID STATE");
   lcd.setCursor(0,1);
   lcd.print("!= FRAME SENSOR ");
+  updateButtonAndHallSensorVars();
+  
   while(currentButtonStateHome==LOW)
   {
     updateButtonAndHallSensorVars();
-    /*
+    
     if(currentHallSensorLBot==LOW && !lidOpenL && !lidOpenR)
       break;
     if(currentHallSensorLTop==LOW && lidOpenL && lidOpenR)
-      break;
-      */
+      {
+        Serial.println("yes");
+        break;
+      }
+    Serial.println("no");
   }
-  screenState = 1;
+
+  if(currentButtonStateHome==HIGH && lastButtonStateHome==LOW)
+    screenState=1;
+  
+  
+  delay(100);
+}
+
+void runErrorProtocolMaxAmps()
+{
+  lcd.setCursor(0, 0);
+  lcd.print("ERROR: MAX AMPS ");
+  lcd.setCursor(0,1);
+  lcd.print("THING ON FRAME? ");
+  while(currentButtonStateHome==LOW)
+  {
+    updateButtonAndHallSensorVars();
+  }
+
+  screenState=1;
+  
+
   delay(100);
 }
 
@@ -638,7 +698,7 @@ void moveWinchManual(boolean winch, boolean dir)
         digitalWrite(switchPinDirL, dir);
         digitalWrite(switchPinPowL, HIGH);
         isMovingL = true;
-   
+     
         while ((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorLBot!=LOW))
         {
           updateButtonAndHallSensorVars();
@@ -653,7 +713,7 @@ void moveWinchManual(boolean winch, boolean dir)
           Serial.print("Amps: ");
           Serial.println(measureCurrent());
         }
-        if (dir==DOWN) 
+        if (lidOpenL && currentHallSensorLBot==LOW && dir==DOWN) 
           delay(2000);
           
         digitalWrite(switchPinPowL, LOW);
@@ -710,7 +770,8 @@ void moveWinchAuto(boolean winch, boolean dir)
     unsigned long winchStartTime = millis();
     unsigned long winchCurrentOpTime = winchStartTime;
     //Serial.println(currentHallSensorLBot);
-    
+    String error = "";
+ 
     while ((currentHallSensorLTop != LOW && dir==UP) || (currentHallSensorLBot != LOW && dir==DOWN))
     {
       updateButtonAndHallSensorVars();
@@ -720,7 +781,16 @@ void moveWinchAuto(boolean winch, boolean dir)
       if(abs(winchCurrentOpTime - winchStartTime)>maxOpTime)
         break;
       if(measureCurrent()>maxAmps)
-        break;
+        {
+          error = "amps";
+          break;
+        }
+      if(currentButtonStateHome==HIGH)
+        {
+          screenState=1;
+          break;
+        }
+        
       /*
       if(mainBoardTemp()>maxBoardTemp)
         break;
@@ -729,12 +799,18 @@ void moveWinchAuto(boolean winch, boolean dir)
       Serial.print("Amps: ");
       Serial.println(measureCurrent());
     }
-    if (dir==DOWN) 
-      delay(2000);
+    if (lidOpenL && currentHallSensorLBot==LOW && dir==DOWN) 
+        delay(2000);
       
+    
     digitalWrite(switchPinPowL, LOW);
     digitalWrite(switchPinDirL, LOW);
     lidOpenL = currentHallSensorLBot!=LOW;
+    if(error.equals("amps"))
+    {
+      runErrorProtocolMaxAmps();
+    }
+    
   }
   /*
   else
