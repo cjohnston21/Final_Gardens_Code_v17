@@ -40,7 +40,7 @@ const int buzzerPin = 52;
 int ampPin = A9;
 
 //Board T Sensor Pin;
-int brdTS = A8;
+int brdTSPin = A8;
 
 
 // GLOBAL VARIABLES
@@ -60,8 +60,9 @@ boolean LEFT = false;
 boolean UP = true;
 boolean DOWN = false;
 boolean manOv = false;
-double maxAmps = 7.0;
-int maxBoardTemp = 100;
+double maxAmps = 10.0;
+int maxBrdTemp = 75;
+int maxOpTime = 60000;
 
 // UI Variables
 boolean screenOff = false;
@@ -105,7 +106,7 @@ int intervalUI = 3000000;
 int intervalThresh = 10000;
 unsigned long previousMillis2 = 0;
 unsigned long currentMillis2 = millis();
-int maxOpTime = 60000;
+
 
 // SETUP
 void setup() {
@@ -136,8 +137,8 @@ void setup() {
   //pinMode(hallSensorRTop, INPUT);
 
   pinMode(buzzerPin, OUTPUT);
-  //pinMode(ampPin, INPUT);
-
+  pinMode(ampPin, INPUT);
+  pinMode(brdTSPin,INPUT);
  
   
   Serial.begin(9600);
@@ -166,6 +167,8 @@ void loop()
       determineUIScreen(buttonPressed);
       runUIScreen(buttonPressed);
 
+      int test = measureBrdTemp();
+      Serial.println(test);
       
       if(screenState<1)
         {
@@ -422,7 +425,7 @@ void runHomeScreen()
   lcd.setCursor(0,0);
   lcd.print("Automatic Mode  ");
   lcd.setCursor(0,1);
-  lcd.print("Temp: " + String(currentTempUI) + " F");
+  lcd.print("Temp: " + String(currentTempUI) + " F        ");
   /*
   lcd.setCursor(0, 0);
   lcd.print("Temperature:    ");
@@ -581,10 +584,31 @@ void runErrorProtocolMaxAmps()
 
   screenState=1;
   
-
+  
   delay(100);
 }
 
+void runErrorProtocolMaxBrdTemp()
+{
+  lcd.setCursor(0, 0);
+  lcd.print("ERROR: MAX TEMP ");
+  lcd.setCursor(0,1);
+  lcd.print("BOX OVERHEATING ");
+  int temp = measureBrdTemp();
+  
+  while(currentButtonStateHome==LOW && temp>maxBrdTemp)
+  {
+    updateButtonAndHallSensorVars();
+    temp = measureBrdTemp();
+    Serial.println(temp);
+  }
+
+  if(currentButtonStateHome == HIGH && lastButtonStateHome == LOW)
+    screenState=1;
+  
+ 
+  delay(100);
+}
 
 
 
@@ -702,7 +726,7 @@ void moveWinchManual(boolean winch, boolean dir)
           if(measureCurrent()>maxAmps)
             break;
           /*
-          if(mainBoardTemp()>maxBoardTemp)
+          if(mainBoardTemp()>maxBrdTemp)
             break;
            */
           //Serial.println(getTemp());
@@ -786,11 +810,12 @@ void moveWinchAuto(boolean winch, boolean dir)
           screenState=1;
           break;
         }
-        
-      /*
-      if(mainBoardTemp()>maxBoardTemp)
-        break;
-       */
+      if(measureBrdTemp()>maxBrdTemp)
+        {
+          error = "temp";
+          break;
+        }
+       
       //Serial.println(getTemp());
       Serial.print("Amps: ");
       Serial.println(measureCurrent());
@@ -802,11 +827,15 @@ void moveWinchAuto(boolean winch, boolean dir)
     digitalWrite(switchPinPowL, LOW);
     digitalWrite(switchPinDirL, LOW);
     lidOpenL = currentHallSensorLBot!=LOW;
+
     if(error.equals("amps"))
-    {
-      runErrorProtocolMaxAmps();
-    }
-    
+      {
+        runErrorProtocolMaxAmps();
+      }
+    else if (error.equals("temp"))
+     {
+        runErrorProtocolMaxBrdTemp();
+     }
   }
   /*
   else
@@ -852,4 +881,17 @@ void moveWinchAuto(boolean winch, boolean dir)
   int sensorValue = analogRead(ampPin);
   double amps = ((512 - sensorValue)*75.75/1023);
   return amps;
+}
+
+/*
+ * FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
+ * Inputs: none
+ * Outputs: none
+ * Global Vars Updated: none
+ */ 
+ double measureBrdTemp()
+{
+  int sensorValue = analogRead(brdTSPin);
+  double temp = sensorValue/10.0;
+  return convertTempToF(temp);
 }
