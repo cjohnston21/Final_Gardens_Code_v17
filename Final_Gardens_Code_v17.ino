@@ -16,9 +16,9 @@ const int rs = 23, rw = 25, en = 27, d4 = 29, d5 = 31, d6 = 33, d7 = 35;
 Adafruit_CharacterOLED lcd(OLED_V2, rs, rw, en, d4, d5, d6, d7);
 
 // UI Button Pins
-const int buttonPinHome = 37; 
-const int buttonPinSelect = 39; 
-const int buttonPinDown = 41; 
+const int buttonPinHome = 37;
+const int buttonPinSelect = 39;
+const int buttonPinDown = 41;
 const int buttonPinUp = 43;
 
 // Relay Pins
@@ -50,23 +50,28 @@ int tempThreshold = 80;
 int currentTempUI;
 int hysteresis = 3;
 
-// Booleans for moving the winch
+// Booleans for checkIfWinchShouldMove()
 int lidStateL;
-boolean isMovingL = false;
 int lidStateR;
-boolean isMovingR = false;
 int CLOSED = 0;
 int OPEN = 1;
 boolean FRAMEISTHERE = LOW;
+//boolean isMovingR = false;
+//boolean isMovingL = false;
 
+//Booleans for for moveWinchAuto(), moveWinchManual
 boolean RIGHT = true;
 boolean LEFT = false;
-boolean UP = true;
-boolean DOWN = false;
+int UP = 1;
+int DOWN = 0;
 boolean manOv = false;
 double maxAmps = 10.0;
 int maxBrdTemp = 75;
-int maxOpTime = 7000;
+int maxOpTime = 7500;
+int maxUpOpTime = 7000;
+int lastUpOpTime = 0;
+int lastDownOpTime = 0;
+int DELAY = 2000;
 
 
 // UI Variables
@@ -123,9 +128,9 @@ void setup() {
   lcd.display();
   loadingScreen();
   lcd.clear();
-  
+
   currentTempUI = getTemp();
-  
+
   pinMode(switchPinPowL, OUTPUT);
   pinMode(switchPinDirL, OUTPUT);
   //pinMode(switchPinPowR, OUTPUT);
@@ -143,160 +148,133 @@ void setup() {
 
   pinMode(buzzerPin, OUTPUT);
   pinMode(ampPin, INPUT);
-  pinMode(brdTSPin,INPUT);
- 
-  
+  pinMode(brdTSPin, INPUT);
+
+
   Serial.begin(9600);
-  updateButtonAndHallSensorVars();
+  updateButtonVars();
+  updateHallSensorVars();
   int buttonPressed = checkButtons();
   determineUIScreen(buttonPressed);
   runUIScreen(buttonPressed);
-  if(currentHallSensorLBot==FRAMEISTHERE)
+  if (currentHallSensorLBot == FRAMEISTHERE)
   {
-    lidStateL=CLOSED;
+    lidStateL = CLOSED;
   }
   else
   {
-    lidStateL=OPEN;
+    lidStateL = OPEN;
   }
   /*
-   * Dr. G recommended closing frame if open from start.
-   * Note if after this lidStateL still isn't reading we should send an error to the screen
-  if(lidStateL==OPEN)
-  {
+     Dr. G recommended closing frame if open from start.
+     Note if after this lidStateL still isn't reading we should send an error to the screen
+    if(lidStateL==OPEN)
+    {
     manOv = false;
     makeWarningSound();
     moveLeftWinch(DOWN);
-  }
+    }
   */
 }
 
 // LOOP
 void loop()
 {
-      updateButtonAndHallSensorVars();
-      int buttonPressed = checkButtons();
-      determineUIScreen(buttonPressed);
-      runUIScreen(buttonPressed);
+  updateButtonVars();
+  updateHallSensorVars();
+  int buttonPressed = checkButtons();
+  determineUIScreen(buttonPressed);
+  runUIScreen(buttonPressed);
 
-      int test = measureBrdTemp();
-      Serial.println(test);
-      
-      if(screenState<1)
+  //IF IN AUTOMATIC MODE
+  if (screenState < 1)
+  {
+    lidStateR = lidStateL;
+
+    //Initial Error Analysis if winch is at one of the hall sensors
+    if (lidStateL == CLOSED && lidStateR == CLOSED && currentHallSensorLBot != FRAMEISTHERE) //|| currentHallSensorRBot!=FRAMEISTHERE))
+    {
+      runErrorProtocolLidState();
+      return;
+    }
+
+    int action = checkWhichAction();
+    int temp;
+    if (action != 0)
+      temp = getTemp();
+    if (action % 2 == 1)
+      currentTempUI = temp;
+    if (action >= 2)
+    {
+      int winchAction = checkIfWinchShouldMove(temp);
+      if (winchAction == DOWN)
+      {
+        makeWarningSound();
+        String error = moveWinchAuto(LEFT, DOWN);
+        if (checkForErrors(error) == true)
         {
-           lidStateR = lidStateL;
-           if(lidStateL==CLOSED && lidStateL==CLOSED && (currentHallSensorLBot!=FRAMEISTHERE)) //|| currentHallSensorRBot!=FRAMEISTHERE))
-            {
-              runErrorProtocolLidState();
-              return;
-            }
-            /*
-            else if(lidStateL==OPEN && lidStateR==OPEN && (currentHallSensorLTop!=FRAMEISTHERE)) //|| currentHallSensorRTop!=FRAMEISTHERE))
-            {
-              runErrorProtocolLidState();
-              return;
-            }
-           */
-          int action = checkIfItIsTime();
-          int temp;
-          if (action!=0)
-            temp = getTemp();
-          if (action%2==1)
-            currentTempUI = temp;
-          if (action>=2)
-            {
-              int winchAction = checkIfWinchShouldMove(temp);
-              if(winchAction == 1)
-                {
-                  makeWarningSound();
-                  String error = moveWinchAuto(LEFT, DOWN);
-                  if(error.equals("amps"))
-                  {
-                     runErrorProtocolMaxAmps();
-                     return;
-                  }
-                  else if (error.equals("temp"))
-                  {
-                      runErrorProtocolMaxBrdTemp();
-                      return;
-                  }
-                  /*
-                  //delay(100);
-                  //moveWinchAuto(RIGHT, DOWN);
-                  if(error.equals("amps"))
-                  {
-                      runErrorProtocolMaxAmps();
-                      return;
-                  }
-                  else if (error.equals("temp"))
-                  {
-                      runErrorProtocolMaxBrdTemp();
-                      return;
-                  }
-                  */
-                  
-                }
-              else if(winchAction == 2)
-                {
-                  makeWarningSound();
-                  String error = moveWinchAuto(LEFT, UP);
-                  if(error.equals("amps"))
-                  {
-                     runErrorProtocolMaxAmps();
-                     return;
-                  }
-                  else if (error.equals("temp"))
-                  {
-                      runErrorProtocolMaxBrdTemp();
-                      return;
-                  }
-                  /*
-                  //delay(100);
-                  //moveWinchAuto(RIGHT, UP);
-                  if(error.equals("amps"))
-                  {
-                      runErrorProtocolMaxAmps();
-                      return;
-                  }
-                  else if (error.equals("temp"))
-                  {
-                      runErrorProtocolMaxBrdTemp();
-                      return;
-                  }
-                  */
-                }
-            
-            }
+          return;
         }
 
-        
+        /*
+          //delay(100);
+          //moveWinchAuto(RIGHT, DOWN);
+          if(error.equals("amps"))
+          {
+            runErrorProtocolMaxAmps();
+            return;
+          }
+          else if (error.equals("temp"))
+          {
+            runErrorProtocolMaxBrdTemp();
+            return;
+          }
+        */
+
+      }
+      else if (winchAction == UP)
+      {
+        makeWarningSound();
+        String error = moveWinchAuto(LEFT, UP);
+        if (checkForErrors(error) == true)
+        {
+          return;
+        }
+
+        /*
+          //delay(100);
+          //moveWinchAuto(RIGHT, UP);
+          if(error.equals("amps"))
+          {
+            runErrorProtocolMaxAmps();
+            return;
+          }
+          else if (error.equals("temp"))
+          {
+            runErrorProtocolMaxBrdTemp();
+            return;
+          }
+        */
+      }
+
+    }
+  }
+
+
 }
 
 /*
- * FUNCTION: Updates UI button vars and hall sensor vars
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: hall sensor vars, button vars
- */
-void updateButtonAndHallSensorVars()
+   FUNCTION: Updates UI button vars and hall sensor vars
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: hall sensor vars, button vars
+*/
+void updateButtonVars()
 {
-  lastHallSensorLBot = currentHallSensorLBot;
-  lastHallSensorLTop = currentHallSensorLTop;
-  lastHallSensorRBot = currentHallSensorRBot;
-  lastHallSensorRTop = currentHallSensorRTop;
-
-
   lastButtonStateHome = currentButtonStateHome;
   lastButtonStateSelect = currentButtonStateSelect;
   lastButtonStateDown = currentButtonStateDown;
   lastButtonStateUp = currentButtonStateUp;
-
-  
-  currentHallSensorLBot = digitalRead(hallSensorLBot);
-  currentHallSensorRBot = digitalRead(hallSensorRBot);
-  currentHallSensorLTop = digitalRead(hallSensorLTop);
-  currentHallSensorRTop = digitalRead(hallSensorRTop);
-  
 
   currentButtonStateHome = debounce(lastButtonStateHome, buttonPinHome);
   currentButtonStateSelect = debounce(lastButtonStateSelect, buttonPinSelect);
@@ -304,11 +282,25 @@ void updateButtonAndHallSensorVars()
   currentButtonStateUp = debounce(lastButtonStateUp, buttonPinUp);
 }
 
+void updateHallSensorVars()
+{
+  lastHallSensorLBot = currentHallSensorLBot;
+  lastHallSensorLTop = currentHallSensorLTop;
+  lastHallSensorRBot = currentHallSensorRBot;
+  lastHallSensorRTop = currentHallSensorRTop;
+
+  currentHallSensorLBot = digitalRead(hallSensorLBot);
+  currentHallSensorRBot = digitalRead(hallSensorRBot);
+  currentHallSensorLTop = digitalRead(hallSensorLTop);
+  currentHallSensorRTop = digitalRead(hallSensorRTop);
+
+}
+
 /*
- * FUNCTION: Debounces button passed to it
- * INPUTS: boolean last (last state of button), int button (button pin)
- * OUTPUT: boolean current (current state of button)
- * Global Vars Updated: none
+   FUNCTION: Debounces button passed to it
+   INPUTS: boolean last (last state of button), int button (button pin)
+   OUTPUT: boolean current (current state of button)
+   Global Vars Updated: none
 */
 boolean debounce(boolean last, int button) {
   boolean current = digitalRead(button);
@@ -324,133 +316,133 @@ boolean debounce(boolean last, int button) {
 // UI LOGIC
 
 /*
- * FUNCTION: if-tree determining which button was pushed
- * Inputs: none
- * Outputs: integer representing button 0 - nothing/mulitple, 1 - H, 2 - S, 3 - D, 4 - U
- * Global Vars Updated: none
- */
- int checkButtons()
- {
-   int multiple = 0;
-   int button = 0;
-   if(currentButtonStateHome==HIGH && lastButtonStateHome==LOW)
-     {
-        button=1;
-        multiple+=1;
-     }
-   if(currentButtonStateSelect==HIGH && lastButtonStateSelect==LOW)
-      {
-        button=2;
-        multiple+=2;
-     }
-   if(currentButtonStateDown==HIGH && lastButtonStateDown==LOW)
-      {
-        button=3;
-        multiple+=3;
-      }
-   if(currentButtonStateUp==HIGH && lastButtonStateUp==LOW)
-      {
-        button=4;
-        multiple+=4;
-      }
-      
-   if(button==multiple)
-      return button;
-   else
-      return 0;
- }
+   FUNCTION: if-tree determining which button was pushed
+   Inputs: none
+   Outputs: integer representing button 0 - nothing/mulitple, 1 - H, 2 - S, 3 - D, 4 - U
+   Global Vars Updated: none
+*/
+int checkButtons()
+{
+  int multiple = 0;
+  int button = 0;
+  if (currentButtonStateHome == HIGH && lastButtonStateHome == LOW)
+  {
+    button = 1;
+    multiple += 1;
+  }
+  if (currentButtonStateSelect == HIGH && lastButtonStateSelect == LOW)
+  {
+    button = 2;
+    multiple += 2;
+  }
+  if (currentButtonStateDown == HIGH && lastButtonStateDown == LOW)
+  {
+    button = 3;
+    multiple += 3;
+  }
+  if (currentButtonStateUp == HIGH && lastButtonStateUp == LOW)
+  {
+    button = 4;
+    multiple += 4;
+  }
+
+  if (button == multiple)
+    return button;
+  else
+    return 0;
+}
 
 
 /*
- * FUNCTION: if-tree determining and executing actions based on UI button variables
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: screenOnOffCount, subScreen, tempThreshold, hysteresis, manOv, whichWinch, screenState
- */
-void determineUIScreen(int button) 
+   FUNCTION: if-tree determining and executing actions based on UI button variables
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: screenOnOffCount, subScreen, tempThreshold, hysteresis, manOv, whichWinch, screenState
+*/
+void determineUIScreen(int button)
 {
-  if(button==0)
+  if (button == 0)
     return;
-  if(screenState == -1)
+  if (screenState == -1)
   {
-    if(button==1)
-      screenState=0;
+    if (button == 1)
+      screenState = 0;
   }
-  else if (screenState==0)
+  else if (screenState == 0)
   {
-    if(button==1)
-      screenState= -1;
-    else if (button==2)
+    if (button == 1)
+      screenState = -1;
+    else if (button == 2)
       screenState = 1;
   }
-  else if(screenState>0 && subScreen == false)
+  else if (screenState > 0 && subScreen == false)
+  {
+    if (button == 1)
+      screenState = 0;
+    else if (button == 2 && screenState != 4)
+      subScreen = true;
+    else if (button == 3)
     {
-        if (button==1) 
-            screenState = 0;
-        else if (button==2 && screenState!=4)
-            subScreen = true;
-        else if (button==3)
-        {
-           screenState--;
-           if(screenState<1)
-              screenState=numScreens-1;
-        }  
-        else if (button==4)
-        {
-            if(screenState == numScreens - 1)
-              screenState = 1;
-            else
-              screenState++;
-        }
+      screenState--;
+      if (screenState < 1)
+        screenState = numScreens - 1;
     }
+    else if (button == 4)
+    {
+      if (screenState == numScreens - 1)
+        screenState = 1;
+      else
+        screenState++;
+    }
+  }
   delay(100);
 }
 
 /*
- * FUNCTION: if-tree running the screen the User Interface Displays
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: none
- */
+   FUNCTION: if-tree running the screen the User Interface Displays
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: none
+*/
 void runUIScreen(int button)
 {
   if (screenState == -1)
     lcd.noDisplay();
   else if (screenState == 0)
-    {
-      lcd.display();
-      runHomeScreen();
-    }
+  {
+    lcd.display();
+    runHomeScreen();
+  }
   else if (screenState == 1)
-    {
-      if(subScreen)
-        runChangeTempThresh(button);
-      else
-        runTempThreshScreen();
-    }
+  {
+    if (subScreen)
+      runChangeTempThresh(button);
+    else
+      runTempThreshScreen();
+  }
   else if (screenState == 2)
-    {
-      if(subScreen)
-        runManualMode(button);
-      else
-        runManualModeScreen();
-    }
+  {
+    if (subScreen)
+      runManualMode(button);
+    else
+      runManualModeScreen();
+  }
   else if (screenState == 3)
-    {
-      if(subScreen)
-        runChangeHysteresis(button);
-      else
-        runHysteresisScreen();
-    } 
+  {
+    if (subScreen)
+      runChangeHysteresis(button);
+    else
+      runHysteresisScreen();
+  }
   else if (screenState == 4)
-     runLidStateScreen();
+    runLidStateScreen();
   else if (screenState == 5)
-    {
-      if(subScreen)
-        runChangeMaxAmps(button);
-      else
-        runChangeMaxAmpsScreen();
-    }
+  {
+    if (subScreen)
+      runChangeMaxAmps(button);
+    else
+      runChangeMaxAmpsScreen();
+  }
 }
 
 
@@ -463,7 +455,7 @@ void loadingScreen()
   lcd.setCursor(0, 1);
   lcd.print("   Loading      ");
   lcd.setCursor(10, 1);
-  
+
   for (int i = 0; i < 3; i++)
   {
     for (int i = 0; i < 3; i++)
@@ -480,15 +472,15 @@ void loadingScreen()
 
 void runHomeScreen()
 {
-  lcd.setCursor(0,0);
+  lcd.setCursor(0, 0);
   lcd.print("Automatic Mode  ");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("Temp: " + String(currentTempUI) + " F        ");
   /*
-  lcd.setCursor(0, 0);
-  lcd.print("Temperature:    ");
-  lcd.setCursor(0, 1);
-  lcd.print(String(currentTempUI) + " degrees       ");
+    lcd.setCursor(0, 0);
+    lcd.print("Temperature:    ");
+    lcd.setCursor(0, 1);
+    lcd.print(String(currentTempUI) + " degrees       ");
   */
 }
 
@@ -502,13 +494,13 @@ void runTempThreshScreen()
 
 void runChangeTempThresh(int button)
 {
-  if(button==1)
-    subScreen=false;
-  else if (button==3)
+  if (button == 1)
+    subScreen = false;
+  else if (button == 3)
     tempThreshold--;
-  else if (button==4)
+  else if (button == 4)
     tempThreshold++;
-    
+
   lcd.setCursor(0, 0);
   lcd.print("Temp. Threshold:");
   lcd.setCursor(0, 1);
@@ -519,19 +511,19 @@ void runManualModeScreen()
 {
   lcd.setCursor(0, 0);
   lcd.print("Manual Mode     ");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("                ");
 }
 
 void runManualMode(int button)
 {
-  if(button==1)
-    subScreen=false;
-  else if (button==2)
+  if (button == 1)
+    subScreen = false;
+  else if (button == 2)
     whichWinch = !whichWinch;
-  else if (button==3)
+  else if (button == 3)
     moveWinchManual(whichWinch, DOWN);
-  else if (button==4)
+  else if (button == 4)
     moveWinchManual(whichWinch, UP);
 
   lcd.setCursor(0, 0);
@@ -553,17 +545,17 @@ void runHysteresisScreen()
 
 void runChangeHysteresis(int button)
 {
-  if(button==1)
-    subScreen=false;
-  else if (button==3)
-    {
-      hysteresis--;
-      if (hysteresis<0)
-        hysteresis=0;
-    }
-  else if (button==4)
+  if (button == 1)
+    subScreen = false;
+  else if (button == 3)
+  {
+    hysteresis--;
+    if (hysteresis < 0)
+      hysteresis = 0;
+  }
+  else if (button == 4)
     hysteresis++;
-    
+
   lcd.setCursor(0, 0);
   lcd.print("Buffer:          ");
   lcd.setCursor(0, 1);
@@ -575,7 +567,7 @@ void runLidStateScreen()
   lcd.setCursor(0, 0);
   lcd.print("Lid State:      ");
   lcd.setCursor(0, 1);
-  if(lidStateL==OPEN)
+  if (lidStateL == OPEN)
     lcd.print("Open            ");
   else
     lcd.print("Closed          ");
@@ -591,13 +583,13 @@ void runChangeMaxAmpsScreen()
 
 void runChangeMaxAmps(int button)
 {
-  if(button==3)
-    maxAmps=maxAmps-0.25;
-  else if (button==4)
-    maxAmps=maxAmps+0.25;
-  else if (button==1)
+  if (button == 3)
+    maxAmps = maxAmps - 0.25;
+  else if (button == 4)
+    maxAmps = maxAmps + 0.25;
+  else if (button == 1)
     subScreen = false;
-    
+
   lcd.setCursor(0, 0);
   lcd.print("Max Amps Allowed");
   lcd.setCursor(0, 1);
@@ -608,24 +600,21 @@ void runErrorProtocolLidState()
 {
   lcd.setCursor(0, 0);
   lcd.print("ERROR: LID STATE");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("!= FRAME SENSOR ");
-  updateButtonAndHallSensorVars();
-  
-  while(currentButtonStateHome==LOW)
-  {
-    updateButtonAndHallSensorVars();
-    
-    if(currentHallSensorLBot==FRAMEISTHERE && lidStateL==CLOSED && lidStateR==CLOSED)
-      break;
-    if(currentHallSensorLTop==FRAMEISTHERE && lidStateL==OPEN && lidStateR==CLOSED)
-        break;
-  }
+  updateButtonVars();
+  updateHallSensorVars();
 
-  if(currentButtonStateHome==HIGH && lastButtonStateHome==LOW)
-    screenState=1;
-  
-  
+  while (currentButtonStateSelect == LOW)
+  {
+    updateButtonVars();
+    updateHallSensorVars();
+
+    if (currentHallSensorLBot == FRAMEISTHERE && lidStateL == CLOSED && lidStateR == CLOSED)
+      break;
+  }
+  if (currentButtonStateSelect == HIGH && lastButtonStateSelect == LOW)
+    screenState = 1;
   delay(100);
 }
 
@@ -633,16 +622,15 @@ void runErrorProtocolMaxAmps()
 {
   lcd.setCursor(0, 0);
   lcd.print("ERROR: MAX AMPS ");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("THING ON FRAME? ");
-  while(currentButtonStateHome==LOW)
-  {
-    updateButtonAndHallSensorVars();
-  }
 
-  screenState=1;
-  
-  
+  while (currentButtonStateSelect == LOW)
+  {
+    updateButtonVars();
+  }
+  screenState = 1;
+  //??????????????
   delay(100);
 }
 
@@ -650,60 +638,70 @@ void runErrorProtocolMaxBrdTemp()
 {
   lcd.setCursor(0, 0);
   lcd.print("ERROR: MAX TEMP ");
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("BOX OVERHEATING ");
   int temp = measureBrdTemp();
-  
-  while(currentButtonStateHome==LOW && temp>maxBrdTemp)
+
+  while (currentButtonStateSelect == LOW && temp > maxBrdTemp)
   {
-    updateButtonAndHallSensorVars();
+    updateButtonVars();
     temp = measureBrdTemp();
     Serial.println(temp);
   }
-
-  if(currentButtonStateHome == HIGH && lastButtonStateHome == LOW)
-    screenState=1;
-  
- 
+  if (currentButtonStateSelect == HIGH && lastButtonStateSelect == LOW)
+    screenState = 1;
   delay(100);
 }
 
+void runErrorProtocolMaxOpTime()
+{
+  lcd.setCursor(0, 0);
+  lcd.print("ERROR: MAX TIME ");
+  lcd.setCursor(0, 1);
+  lcd.print("SENSOR BROKEN   ");
 
+  while (currentButtonStateSelect == LOW)
+  {
+    updateButtonVars();
+  }
+  screenState = 1;
+  delay(100);
+}
 
 
 // LOGIC FOR CONTROLLING WINCH
 
 /*
- * FUNCTION: if-tree running the screen the User Interface Displays
- * Inputs: none
- * Outputs: int action (can be 0,1,2,3 and determines if UI temp should be updated or if the temp Threshold should be checked)
- * Global Vars Updated: currentMillis, currentMillis2, previousMillis, previousMillis2
- */
-int checkIfItIsTime() 
+   FUNCTION: if-tree running the screen the User Interface Displays
+   Inputs: none
+   Outputs: int action (can be 0,1,2,3 and determines if UI temp should be updated or if the temp Threshold should be checked)
+   Global Vars Updated: currentMillis, currentMillis2, previousMillis, previousMillis2
+*/
+int checkWhichAction()
 {
   currentMillis = millis();
   currentMillis2 = currentMillis;
   int action = 0;
-  
-  if ((unsigned long)(currentMillis - previousMillis) >= intervalUI) 
+
+  if ((unsigned long)(currentMillis - previousMillis) >= intervalUI)
   {
     previousMillis = currentMillis;
     action += 1;
   }
-  
-  if ((unsigned long)(currentMillis2 - previousMillis2) >= intervalThresh) 
+
+  if ((unsigned long)(currentMillis2 - previousMillis2) >= intervalThresh)
   {
     previousMillis2 = currentMillis2;
     action += 2;
-  } 
+  }
   return action;
 }
 
 /*
- * FUNCTION: Records Temperatures from T sensors. 
- * Inputs: none
- * Outputs: int tempF (temp. in fahrenheit)
- * Global Vars Updated: none
+   FUNCTION: Records Temperatures from T sensors.
+   Inputs: none
+   Outputs: int tempF (temp. in fahrenheit)
+   Global Vars Updated: none
 */
 int getTemp()
 {
@@ -713,17 +711,17 @@ int getTemp()
 
   // Gets Temperature Reading From 0th Temperature Sensor
   double t1 = sensors.getTempCByIndex(0);
-  
+
   int tempF = convertTempToF(t1);
-  
+
   return tempF;
 }
 
-/* 
- * FUNCTION: Converts Celsius to Fahrenheit
- * Inputs: double tempC (temp, in C)
- * Outputs: int T (temp in F)
- * Global Vars Updated: none
+/*
+   FUNCTION: Converts Celsius to Fahrenheit
+   Inputs: double tempC (temp, in C)
+   Outputs: int T (temp in F)
+   Global Vars Updated: none
 */
 int convertTempToF(double tempC)
 {
@@ -732,27 +730,28 @@ int convertTempToF(double tempC)
 }
 
 /*
- * FUNCTION: Checks to see if Temperature is Above/Below Threshold and calls makeWarningSound() and the moveWinch() methods
- * Inputs: int temp (current temp. read by the T sensors)
- * Outputs: none
- * Global Vars Updated: whichWinch
+   FUNCTION: Checks to see if Temperature is Above/Below Threshold and calls makeWarningSound() and the moveWinch() methods
+   Inputs: int temp (current temp. read by the T sensors)
+   Outputs: none
+   Global Vars Updated: whichWinch
 */
 int checkIfWinchShouldMove(int temp)
 {
-  if (abs(tempThreshold - temp) > hysteresis && temp < tempThreshold && lidStateL==OPEN)// && lidStateR==OPEN)
-      return 1;
-  else if (abs(tempThreshold - temp) > hysteresis && temp > tempThreshold && lidStateL==CLOSED)// && lidStateR==CLOSED)
-      return 2;
- 
-  return 0;
+  int action = 3;
+  if ((abs(tempThreshold - temp) > hysteresis && temp < tempThreshold && lidStateL == OPEN) || lastDownOpTime > 0) // && lidStateR==OPEN)
+    action = DOWN;
+  else if ((abs(tempThreshold - temp) > hysteresis && temp > tempThreshold && lidStateL == CLOSED) || lastUpOpTime > 0) // && lidStateR==CLOSED)
+    action = UP;
+
+  return action;
 }
 
 /*
- * FUNTION: Tones the buzzer down by the cold frames to alert surrounding people that the winch is about to move
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: none
- */
+   FUNTION: Tones the buzzer down by the cold frames to alert surrounding people that the winch is about to move
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: none
+*/
 void makeWarningSound()
 {
   tone(buzzerPin, 4000, 500);
@@ -764,94 +763,95 @@ void makeWarningSound()
 }
 
 /*
- * FUNCTION: Controls relays to move the winches during manual mode
- * Inputs: boolean dir (DOWN or UP), boolean winch (which winch we are controling) 
- * Outpus: none
- * Global Vars Updated: isMovingL, openLidL, updateButtonAndHallSensorVars(), openLidR, isMovingL
- */
+   FUNCTION: Controls relays to move the winches during manual mode
+   Inputs: boolean dir (DOWN or UP), boolean winch (which winch we are controling)
+   Outpus: none
+   Global Vars Updated: isMovingL, openLidL, updateButtonVars(), updateHallSensorVars(), openLidR, isMovingL
+*/
 void moveWinchManual(boolean winch, boolean dir)
 {
-  if(winch==LEFT)
+  if (winch == LEFT)
   {
-        digitalWrite(switchPinDirL, dir);
-        digitalWrite(switchPinPowL, HIGH);
-        isMovingL = true;
-     
-        while ((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorLBot!=FRAMEISTHERE))
-        {
-          updateButtonAndHallSensorVars();
-     
-          if(measureCurrent()>maxAmps)
-            break;
-          /*
-          if(mainBoardTemp()>maxBrdTemp)
-            break;
-           */
-          //Serial.println(getTemp());
-          Serial.print("Amps: ");
-          Serial.println(measureCurrent());
-        }
-        if (lidStateL==OPEN && currentHallSensorLBot==FRAMEISTHERE && dir==DOWN) 
-          delay(2000);
-          
-        digitalWrite(switchPinPowL, LOW);
-        digitalWrite(switchPinDirL, LOW);
-        isMovingL = false;
-        if(currentHallSensorLBot==FRAMEISTHERE)
-        {
-          lidStateL=CLOSED;
-        }
-        else
-        {
-          lidStateL=OPEN;
-        }
-  }
-/*
- else
- {
-    digitalWrite(switchPinDirR, dir);
-    digitalWrite(switchPinPowR, HIGH);
-    isMovingR = true;
-    unsigned long winchStartTime = millis();
-    unsigned long winchCurrentOpTime = winchStartTime;
-    
-    while (((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorRBot==HIGH) || !manOv) && (isMovingR && !checkHallSensors(dir)))
-    {
-      updateButtonAndHallSensorVars();
-      
-      unsigned long winchPrevDiff = abs(winchCurrentOpTime - winchStartTime);
-      winchCurrentOpTime = millis();
-      if(winchPrevDiff>abs(winchCurrentOpTime - winchStartTime))
-        winchStartTime = -winchPrevDiff;
-      
-      if(!manOv && abs(winchCurrentOpTime - winchStartTime)>maxOpTime)
-        isMovingR = false;
+    digitalWrite(switchPinDirL, dir);
+    digitalWrite(switchPinPowL, HIGH);
+    //isMovingL = true;
 
-      //senseCurrent();
-    }
-    if (dir==DOWN) 
-      delay(500);
-    digitalWrite(switchPinPowR, LOW);
-    digitalWrite(switchPinDirR, LOW);
-    isMovingR = false;
-    if(currentHallSensorRBot!=LOW)
+    while ((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorLBot != FRAMEISTHERE))
     {
-      lidStateR=OPEN;
+      updateButtonVars();
+      updateHallSensorVars();
+
+      if (measureCurrent() > maxAmps)
+        break;
+      /*
+        if(mainBoardTemp()>maxBrdTemp)
+        break;
+      */
+      //Serial.println(getTemp());
+      Serial.print("Amps: ");
+      Serial.println(measureCurrent());
     }
- }
-*/
-   
+    if (lidStateL == OPEN && currentHallSensorLBot == FRAMEISTHERE && dir == DOWN)
+      delay(2000);
+
+    digitalWrite(switchPinPowL, LOW);
+    digitalWrite(switchPinDirL, LOW);
+    //isMovingL = false;
+    if (currentHallSensorLBot == FRAMEISTHERE)
+    {
+      lidStateL = CLOSED;
+    }
+    else
+    {
+      lidStateL = OPEN;
+    }
+  }
+  /*
+    else
+    {
+      digitalWrite(switchPinDirR, dir);
+      digitalWrite(switchPinPowR, HIGH);
+      isMovingR = true;
+      unsigned long winchStartTime = millis();
+      unsigned long winchCurrentOpTime = winchStartTime;
+
+      while (((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorRBot==HIGH) || !manOv) && (isMovingR && !checkHallSensors(dir)))
+      {
+        updateButtonAndHallSensorVars();
+
+        unsigned long winchPrevDiff = abs(winchCurrentOpTime - winchStartTime);
+        winchCurrentOpTime = millis();
+        if(winchPrevDiff>abs(winchCurrentOpTime - winchStartTime))
+          winchStartTime = -winchPrevDiff;
+
+        if(!manOv && abs(winchCurrentOpTime - winchStartTime)>maxOpTime)
+          isMovingR = false;
+
+        //senseCurrent();
+      }
+      if (dir==DOWN)
+        delay(500);
+      digitalWrite(switchPinPowR, LOW);
+      digitalWrite(switchPinDirR, LOW);
+      isMovingR = false;
+      if(currentHallSensorRBot!=LOW)
+      {
+        lidStateR=OPEN;
+      }
+    }
+  */
+
 }
 
 /*
- * FUNCTION: Controls relays to move winches during Automatic Mode
- * Inputs: boolean dir (DOWN or UP), boolean winch (which winch)
- * Outpus: none
- * Global Vars Updated: isMovingR, openLidR, updateButtonAndHallSensorVars()
- */
+   FUNCTION: Controls relays to move winches during Automatic Mode
+   Inputs: boolean dir (DOWN or UP), boolean winch (which winch)
+   Outpus: none
+   Global Vars Updated: isMovingR, openLidR, updateButtonVars(), updateHallSensorVars()
+*/
 String moveWinchAuto(boolean winch, boolean dir)
 {
-  if(winch==LEFT)
+  if (winch == LEFT)
   {
     digitalWrite(switchPinDirL, dir);
     digitalWrite(switchPinPowL, HIGH);
@@ -859,76 +859,90 @@ String moveWinchAuto(boolean winch, boolean dir)
     unsigned long winchCurrentOpTime = winchStartTime;
     //Serial.println(currentHallSensorLBot);
     String error = "";
- 
-    while ((currentHallSensorLTop != FRAMEISTHERE && dir==UP) || (currentHallSensorLBot != FRAMEISTHERE && dir==DOWN))
+
+    while (((winchCurrentOpTime - winchStartTime) < (maxUpOpTime - lastUpOpTime) && dir == UP) || (currentHallSensorLBot != FRAMEISTHERE && dir == DOWN))
     {
-      updateButtonAndHallSensorVars();
-      
+      updateButtonVars();
+      updateHallSensorVars();
       winchCurrentOpTime = millis();
-      
-      if(abs(winchCurrentOpTime - winchStartTime)>maxOpTime)
+
+      //ERROR ANALYSIS
+      if ((winchCurrentOpTime - winchStartTime) > maxOpTime)
+      {
+        error = "time";
         break;
-      if(measureCurrent()>maxAmps)
-        {
-          error = "amps";
-          break;
-        }
-      if(currentButtonStateHome==HIGH)
-        {
-          screenState=1;
-          break;
-        }
-      if(measureBrdTemp()>maxBrdTemp)
-        {
-          error = "temp";
-          break;
-        }
-       
+      }
+      if (measureCurrent() > maxAmps)
+      {
+        error = "amps";
+        break;
+      }
+      if (currentButtonStateSelect == HIGH)
+      {
+        error = "button";
+        break;
+      }
+      if (measureBrdTemp() > maxBrdTemp)
+      {
+        error = "temp";
+        break;
+      }
+
       //Serial.println(getTemp());
       Serial.print("Amps: ");
       Serial.println(measureCurrent());
     }
-    if (lidStateL==OPEN && currentHallSensorLBot==LOW && dir==DOWN) 
-        delay(2000);
-      
-    
-    digitalWrite(switchPinPowL, LOW);
-    digitalWrite(switchPinDirL, LOW);
-    if(currentHallSensorLBot==FRAMEISTHERE)
+
+    if ((error.equals("amps") || error.equals("temp") || error.equals("button")) && dir == UP)
     {
-      lidStateL=CLOSED;
+      lastUpOpTime = winchCurrentOpTime - winchStartTime;
     }
     else
     {
-      lidStateL=OPEN;
+      lastUpOpTime = 0;
+    }
+
+    //DELAY to get frame to close all the way
+    if ((lidStateL == OPEN || lastDownOpTime > 0) && currentHallSensorLBot == FRAMEISTHERE && dir == DOWN && error.equals(""))
+      runDelay();
+
+    digitalWrite(switchPinPowL, LOW);
+    digitalWrite(switchPinDirL, LOW);
+    if (currentHallSensorLBot == FRAMEISTHERE)
+    {
+      lidStateL = CLOSED;
+    }
+    else
+    {
+      lidStateL = OPEN;
     }
 
     return error;
   }
   /*
-  else
-  {
+    else
+    {
     digitalWrite(switchPinDirR, dir);
     digitalWrite(switchPinPowR, HIGH);
     isMovingR = true;
         unsigned long winchStartTime = millis();
         unsigned long winchCurrentOpTime = winchStartTime;
-        
+
         while (!manOv && currentHallSensorRTop == LOW && lastHallSensorRTop == HIGH && dir==UP) || (currentHallSensorRBot == LOW && lastHallSensorRBot == HIGH && dir==DOWN)
         {
           updateButtonAndHallSensorVars();
-          
+
           unsigned long winchPrevDiff = abs(winchCurrentOpTime - winchStartTime);
           winchCurrentOpTime = millis();
           if(winchPrevDiff>abs(winchCurrentOpTime - winchStartTime))
             winchStartTime = -winchPrevDiff;
-          
+
           if(!manOv && abs(winchCurrentOpTime - winchStartTime)>maxOpTime)
             isMovingR = false;
-    
+
           //senseCurrent();
         }
-        
+
         digitalWrite(switchPinPowR, LOW);
         digitalWrite(switchPinDirR, LOW);
         isMovingR = false;
@@ -937,32 +951,83 @@ String moveWinchAuto(boolean winch, boolean dir)
           lidStateR=OPEN;
         }
         delay(500);
-  }
+    }
   */
 }
 
+boolean checkForErrors(String error)
+{
+  if (error.equals("amps"))
+  {
+    runErrorProtocolMaxAmps();
+  }
+  else if (error.equals("temp"))
+  {
+    runErrorProtocolMaxBrdTemp();
+  }
+  else if (error.equals("time"))
+  {
+    runErrorProtocolMaxOpTime();
+  }
+  else if (error.equals("button"))
+  {
+    screenState = 1;
+  }
+
+  return error.length() > 0;
+}
+
+void runDelay()
+{
+  unsigned long winchStartTimeD = millis();
+  unsigned long winchCurrentOpTimeD = millis();
+  String error = "";
+  
+  while ((winchCurrentOpTimeD - winchStartTimeD) < (DELAY - lastDownOpTime))
+  {
+    updateButtonVars();
+    winchCurrentOpTimeD = millis();
+
+    if (currentButtonStateSelect == HIGH)
+    {
+      error = "button";
+      break;
+    }
+  }
+
+  if (error.equals("button"))
+  {
+    lastDownOpTime = winchCurrentOpTimeD - winchStartTimeD;
+  }
+  else
+  {
+    lastDownOpTime = 0;
+  }
+
+}
+
 /*
- * FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: none
- */ 
- double measureCurrent()
+   FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: none
+*/
+double measureCurrent()
 {
   int sensorValue = analogRead(ampPin);
-  double amps = ((512 - sensorValue)*75.75/1023);
+  double amps = ((512 - sensorValue) * 75.75 / 1023);
   return amps;
 }
 
 /*
- * FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
- * Inputs: none
- * Outputs: none
- * Global Vars Updated: none
- */ 
- double measureBrdTemp()
+   FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: none
+*/
+double measureBrdTemp()
 {
   int sensorValue = analogRead(brdTSPin);
-  double temp = sensorValue/10.0;
+  double temp = sensorValue / 10.0;
   return convertTempToF(temp);
 }
