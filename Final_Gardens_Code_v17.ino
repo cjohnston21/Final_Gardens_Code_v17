@@ -51,10 +51,14 @@ int currentTempUI;
 int hysteresis = 3;
 
 // Booleans for moving the winch
-boolean lidOpenL = false;
+int lidStateL;
 boolean isMovingL = false;
-boolean lidOpenR = false;
+int lidStateR;
 boolean isMovingR = false;
+int CLOSED = 0;
+int OPEN = 1;
+
+
 boolean RIGHT = true;
 boolean LEFT = false;
 boolean UP = true;
@@ -63,6 +67,7 @@ boolean manOv = false;
 double maxAmps = 10.0;
 int maxBrdTemp = 75;
 int maxOpTime = 60000;
+
 
 // UI Variables
 boolean screenOff = false;
@@ -146,11 +151,14 @@ void setup() {
   int buttonPressed = checkButtons();
   determineUIScreen(buttonPressed);
   runUIScreen(buttonPressed);
-  lidOpenL = currentHallSensorLBot!=LOW;
+  if(currentHallSensorLBot!=LOW)
+  {
+    lidStateL=OPEN;
+  }
   /*
    * Dr. G recommended closing frame if open from start.
-   * Note if after this lidOpenL still isn't reading we should send an error to the screen
-  if(lidOpenL)
+   * Note if after this lidStateL still isn't reading we should send an error to the screen
+  if(lidStateL==OPEN)
   {
     manOv = false;
     makeWarningSound();
@@ -172,13 +180,13 @@ void loop()
       
       if(screenState<1)
         {
-           lidOpenR = lidOpenL;
-           if(!lidOpenL && !lidOpenR && (currentHallSensorLBot!=LOW)) //|| currentHallSensorRBot!=LOW))
+           lidStateR = lidStateL;
+           if(lidStateL==CLOSED && lidStateL==CLOSED && (currentHallSensorLBot!=LOW)) //|| currentHallSensorRBot!=LOW))
             {
               runErrorProtocolLidState();
               return;
             }
-            else if(lidOpenL && lidOpenR && (currentHallSensorLTop!=LOW)) //|| currentHallSensorRTop!=LOW))
+            else if(lidStateL==OPEN && lidStateR==OPEN && (currentHallSensorLTop!=LOW)) //|| currentHallSensorRTop!=LOW))
             {
               runErrorProtocolLidState();
               return;
@@ -196,16 +204,57 @@ void loop()
               if(winchAction == 1)
                 {
                   makeWarningSound();
-                  moveWinchAuto(LEFT, DOWN);
+                  String error = moveWinchAuto(LEFT, DOWN);
+                  if(error.equals("amps"))
+                  {
+                     runErrorProtocolMaxAmps();
+                     return;
+                  }
+                  else if (error.equals("temp"))
+                  {
+                      runErrorProtocolMaxBrdTemp();
+                      return;
+                  }
+                  /*
                   //delay(100);
                   //moveWinchAuto(RIGHT, DOWN);
+                  if(error.equals("amps"))
+                  {
+                      runErrorProtocolMaxAmps();
+                  }
+                  else if (error.equals("temp"))
+                  {
+                      runErrorProtocolMaxBrdTemp();
+                  }
+                  */
+                  
                 }
               else if(winchAction == 2)
                 {
                   makeWarningSound();
-                  moveWinchAuto(LEFT, UP);
+                  String error = moveWinchAuto(LEFT, UP);
+                  if(error.equals("amps"))
+                  {
+                     runErrorProtocolMaxAmps();
+                     return;
+                  }
+                  else if (error.equals("temp"))
+                  {
+                      runErrorProtocolMaxBrdTemp();
+                      return;
+                  }
+                  /*
                   //delay(100);
                   //moveWinchAuto(RIGHT, UP);
+                  if(error.equals("amps"))
+                  {
+                      runErrorProtocolMaxAmps();
+                  }
+                  else if (error.equals("temp"))
+                  {
+                      runErrorProtocolMaxBrdTemp();
+                  }
+                  */
                 }
             
             }
@@ -517,7 +566,7 @@ void runLidStateScreen()
   lcd.setCursor(0, 0);
   lcd.print("Lid State:      ");
   lcd.setCursor(0, 1);
-  if(lidOpenL==true)
+  if(lidStateL==OPEN)
     lcd.print("Open            ");
   else
     lcd.print("Closed          ");
@@ -558,9 +607,9 @@ void runErrorProtocolLidState()
   {
     updateButtonAndHallSensorVars();
     
-    if(currentHallSensorLBot==LOW && !lidOpenL && !lidOpenR)
+    if(currentHallSensorLBot==LOW && lidStateL==CLOSED && lidStateR==CLOSED)
       break;
-    if(currentHallSensorLTop==LOW && lidOpenL && lidOpenR)
+    if(currentHallSensorLTop==LOW && lidStateL==OPEN && lidStateR==CLOSED)
         break;
   }
 
@@ -681,9 +730,9 @@ int convertTempToF(double tempC)
 */
 int checkIfWinchShouldMove(int temp)
 {
-  if (abs(tempThreshold - temp) > hysteresis && temp < tempThreshold && lidOpenL)// && lidOpenR)
+  if (abs(tempThreshold - temp) > hysteresis && temp < tempThreshold && lidStateL==OPEN)// && lidStateR==OPEN)
       return 1;
-  else if (abs(tempThreshold - temp) > hysteresis && temp > tempThreshold && !lidOpenL)// && !lidOpenR)
+  else if (abs(tempThreshold - temp) > hysteresis && temp > tempThreshold && lidStateL==CLOSED)// && lidStateR==CLOSED)
       return 2;
  
   return 0;
@@ -733,13 +782,16 @@ void moveWinchManual(boolean winch, boolean dir)
           Serial.print("Amps: ");
           Serial.println(measureCurrent());
         }
-        if (lidOpenL && currentHallSensorLBot==LOW && dir==DOWN) 
+        if (lidStateL==OPEN && currentHallSensorLBot==LOW && dir==DOWN) 
           delay(2000);
           
         digitalWrite(switchPinPowL, LOW);
         digitalWrite(switchPinDirL, LOW);
         isMovingL = false;
-        lidOpenL = currentHallSensorLBot!=LOW;
+        if(currentHallSensorLBot!=LOW)
+        {
+          lidStateL=OPEN;
+        }
   }
 /*
  else
@@ -769,7 +821,10 @@ void moveWinchManual(boolean winch, boolean dir)
     digitalWrite(switchPinPowR, LOW);
     digitalWrite(switchPinDirR, LOW);
     isMovingR = false;
-    lidOpenR = currentHallSensorRBot!=LOW;
+    if(currentHallSensorRBot!=LOW)
+    {
+      lidStateR=OPEN;
+    }
  }
 */
    
@@ -781,7 +836,7 @@ void moveWinchManual(boolean winch, boolean dir)
  * Outpus: none
  * Global Vars Updated: isMovingR, openLidR, updateButtonAndHallSensorVars()
  */
-void moveWinchAuto(boolean winch, boolean dir)
+String moveWinchAuto(boolean winch, boolean dir)
 {
   if(winch==LEFT)
   {
@@ -820,22 +875,18 @@ void moveWinchAuto(boolean winch, boolean dir)
       Serial.print("Amps: ");
       Serial.println(measureCurrent());
     }
-    if (lidOpenL && currentHallSensorLBot==LOW && dir==DOWN) 
+    if (lidStateL==OPEN && currentHallSensorLBot==LOW && dir==DOWN) 
         delay(2000);
       
     
     digitalWrite(switchPinPowL, LOW);
     digitalWrite(switchPinDirL, LOW);
-    lidOpenL = currentHallSensorLBot!=LOW;
+    if(currentHallSensorLBot!=LOW)
+    {
+      lidStateL=OPEN;
+    }
 
-    if(error.equals("amps"))
-      {
-        runErrorProtocolMaxAmps();
-      }
-    else if (error.equals("temp"))
-     {
-        runErrorProtocolMaxBrdTemp();
-     }
+    return error;
   }
   /*
   else
@@ -864,7 +915,10 @@ void moveWinchAuto(boolean winch, boolean dir)
         digitalWrite(switchPinPowR, LOW);
         digitalWrite(switchPinDirR, LOW);
         isMovingR = false;
-        lidOpenR = currentHallSensorRBot!=LOW;
+        if(currentHallSensorRBot!=LOW)
+        {
+          lidStateR=OPEN;
+        }
         delay(500);
   }
   */
