@@ -179,7 +179,6 @@ void loop()
   Serial.println(currentHallSensorLBot);
   updateButtonVars();
   updateHallSensorVars();
- 
   int buttonPressed = checkButtons();
   determineUIScreen(buttonPressed);
   error = runUIScreen(buttonPressed);
@@ -1009,7 +1008,7 @@ String runDelay()
     updateButtonVars();
     winchCurrentOpTimeD = millis();
 
-    if (currentButtonStateSelect == HIGH && manOv == false)
+    if (currentButtonStateSelect == HIGH && screenState<1)
     {
       error = "button";
       break;
