@@ -67,11 +67,12 @@ int DOWN = 0;
 boolean manOv = false;
 double maxAmps = 10.0;
 int maxBrdTemp = 75;
-int maxOpTime = 7500;
-int maxUpOpTime = 7000;
+int maxOpTime = 7000 - 2400 + 500;
+int maxUpOpTime = 7000 - 2400;
 int lastUpOpTime = 0;
 int lastDownOpTime = 0;
 int DELAY = 2000;
+
 
 
 // UI Variables
@@ -156,15 +157,9 @@ void setup() {
   updateHallSensorVars();
   int buttonPressed = checkButtons();
   determineUIScreen(buttonPressed);
+  updateLidStates();
   runUIScreen(buttonPressed);
-  if (currentHallSensorLBot == FRAMEISTHERE)
-  {
-    lidStateL = CLOSED;
-  }
-  else
-  {
-    lidStateL = OPEN;
-  }
+  
   /*
      Dr. G recommended closing frame if open from start.
      Note if after this lidStateL still isn't reading we should send an error to the screen
@@ -180,17 +175,23 @@ void setup() {
 // LOOP
 void loop()
 {
+  String error;
+  Serial.println(currentHallSensorLBot);
   updateButtonVars();
   updateHallSensorVars();
+ 
   int buttonPressed = checkButtons();
   determineUIScreen(buttonPressed);
-  runUIScreen(buttonPressed);
+  error = runUIScreen(buttonPressed);
+  if (checkForErrors(error) == true)
+  {
+    subScreen = false;
+    return;
+  }
 
   //IF IN AUTOMATIC MODE
   if (screenState < 1)
   {
-    lidStateR = lidStateL;
-
     //Initial Error Analysis if winch is at one of the hall sensors
     if (lidStateL == CLOSED && lidStateR == CLOSED && currentHallSensorLBot != FRAMEISTHERE) //|| currentHallSensorRBot!=FRAMEISTHERE))
     {
@@ -210,7 +211,7 @@ void loop()
       if (winchAction == DOWN)
       {
         makeWarningSound();
-        String error = moveWinchAuto(LEFT, DOWN);
+        error = moveWinchAuto(LEFT, DOWN);
         if (checkForErrors(error) == true)
         {
           return;
@@ -235,7 +236,7 @@ void loop()
       else if (winchAction == UP)
       {
         makeWarningSound();
-        String error = moveWinchAuto(LEFT, UP);
+        error = moveWinchAuto(LEFT, UP);
         if (checkForErrors(error) == true)
         {
           return;
@@ -404,8 +405,9 @@ void determineUIScreen(int button)
    Outputs: none
    Global Vars Updated: none
 */
-void runUIScreen(int button)
+String runUIScreen(int button)
 {
+  String error = "";
   if (screenState == -1)
     lcd.noDisplay();
   else if (screenState == 0)
@@ -423,7 +425,7 @@ void runUIScreen(int button)
   else if (screenState == 2)
   {
     if (subScreen)
-      runManualMode(button);
+      error = runManualMode(button);
     else
       runManualModeScreen();
   }
@@ -443,6 +445,8 @@ void runUIScreen(int button)
     else
       runChangeMaxAmpsScreen();
   }
+
+  return error;
 }
 
 
@@ -515,16 +519,17 @@ void runManualModeScreen()
   lcd.print("                ");
 }
 
-void runManualMode(int button)
+String runManualMode(int button)
 {
+  String error = "";
   if (button == 1)
     subScreen = false;
   else if (button == 2)
     whichWinch = !whichWinch;
   else if (button == 3)
-    moveWinchManual(whichWinch, DOWN);
+    error = moveWinchManual(whichWinch, DOWN);
   else if (button == 4)
-    moveWinchManual(whichWinch, UP);
+    error = moveWinchManual(whichWinch, UP);
 
   lcd.setCursor(0, 0);
   lcd.print("Controlling:    ");
@@ -533,6 +538,8 @@ void runManualMode(int button)
     lcd.print("Left Winch      ");
   else
     lcd.print("Right Winch     ");
+
+  return error;
 }
 
 void runHysteresisScreen()
@@ -768,43 +775,50 @@ void makeWarningSound()
    Outpus: none
    Global Vars Updated: isMovingL, openLidL, updateButtonVars(), updateHallSensorVars(), openLidR, isMovingL
 */
-void moveWinchManual(boolean winch, boolean dir)
+String moveWinchManual(boolean winch, boolean dir)
 {
   if (winch == LEFT)
   {
     digitalWrite(switchPinDirL, dir);
     digitalWrite(switchPinPowL, HIGH);
-    //isMovingL = true;
+    String error = "";
 
-    while ((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN && currentHallSensorLBot != FRAMEISTHERE))
+    while ((currentButtonStateUp == HIGH && dir == UP) || (currentButtonStateDown == HIGH && dir == DOWN))
     {
       updateButtonVars();
       updateHallSensorVars();
-
-      if (measureCurrent() > maxAmps)
-        break;
-      /*
-        if(mainBoardTemp()>maxBrdTemp)
-        break;
+      /* FOR TRYING TO STOP THEM FROM UNSPOOLING
+        if(currentHallSensorLBot==FRAMEISTHERE && dir==DOWN)
+        {
+          winchCurrentOpTime = millis();
+        }
       */
-      //Serial.println(getTemp());
-      Serial.print("Amps: ");
-      Serial.println(measureCurrent());
+
+      //ERROR ANALYSIS
+      if (measureCurrent() > maxAmps)
+      {
+        error = "amps";
+        break;
+      }
+      if (measureBrdTemp() > maxBrdTemp)
+      {
+        error = "temp";
+        break;
+      }
+      /* FOR TRYING TO STOP THEM FROM UNSPOOLING
+        if((winchCurrentOpTime - winchStartTime)>DELAY)
+        {
+        Serial.println("BREAK");
+        break;
+        }
+      */
     }
-    if (lidStateL == OPEN && currentHallSensorLBot == FRAMEISTHERE && dir == DOWN)
-      delay(2000);
 
     digitalWrite(switchPinPowL, LOW);
     digitalWrite(switchPinDirL, LOW);
-    //isMovingL = false;
-    if (currentHallSensorLBot == FRAMEISTHERE)
-    {
-      lidStateL = CLOSED;
-    }
-    else
-    {
-      lidStateL = OPEN;
-    }
+    
+    updateLidStates();
+    return error;
   }
   /*
     else
@@ -840,6 +854,7 @@ void moveWinchManual(boolean winch, boolean dir)
       }
     }
   */
+  return "";
 
 }
 
@@ -864,7 +879,12 @@ String moveWinchAuto(boolean winch, boolean dir)
     {
       updateButtonVars();
       updateHallSensorVars();
-      winchCurrentOpTime = millis();
+      if ((currentHallSensorLBot != FRAMEISTHERE && dir == UP) || (dir == DOWN))
+        winchCurrentOpTime = millis();
+
+      Serial.print(winchCurrentOpTime - winchStartTime);
+      Serial.print(", ");
+      Serial.println(currentHallSensorLBot);
 
       //ERROR ANALYSIS
       if ((winchCurrentOpTime - winchStartTime) > maxOpTime)
@@ -903,20 +923,14 @@ String moveWinchAuto(boolean winch, boolean dir)
     }
 
     //DELAY to get frame to close all the way
+    //???????? why lidStateL open and currentHallSensorLBot == FRAME IS THERE
     if ((lidStateL == OPEN || lastDownOpTime > 0) && currentHallSensorLBot == FRAMEISTHERE && dir == DOWN && error.equals(""))
-      runDelay();
+      error = runDelay();
 
     digitalWrite(switchPinPowL, LOW);
     digitalWrite(switchPinDirL, LOW);
-    if (currentHallSensorLBot == FRAMEISTHERE)
-    {
-      lidStateL = CLOSED;
-    }
-    else
-    {
-      lidStateL = OPEN;
-    }
-
+    
+    updateLidStates();
     return error;
   }
   /*
@@ -953,6 +967,7 @@ String moveWinchAuto(boolean winch, boolean dir)
         delay(500);
     }
   */
+  return "";
 }
 
 boolean checkForErrors(String error)
@@ -977,25 +992,49 @@ boolean checkForErrors(String error)
   return error.length() > 0;
 }
 
-void runDelay()
+/*
+   FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
+   Inputs: none
+   Outputs: none
+   Global Vars Updated: none
+*/
+String runDelay()
 {
   unsigned long winchStartTimeD = millis();
   unsigned long winchCurrentOpTimeD = millis();
   String error = "";
-  
+
   while ((winchCurrentOpTimeD - winchStartTimeD) < (DELAY - lastDownOpTime))
   {
     updateButtonVars();
     winchCurrentOpTimeD = millis();
 
-    if (currentButtonStateSelect == HIGH)
+    if (currentButtonStateSelect == HIGH && manOv == false)
     {
       error = "button";
       break;
     }
+    if (measureCurrent() > maxAmps)
+    {
+      error = "amps";
+      break;
+    }
+    if (measureBrdTemp() > maxBrdTemp)
+    {
+      error = "temp";
+      break;
+    }
+    /*
+      if (currentButtonStateDown==LOW && manOv == true)
+      {
+      error = "button released";
+      break;
+      }
+    */
   }
 
-  if (error.equals("button"))
+  // ERROR ANALYSIS FOR AUTOMATIC MODE
+  if (error.equals("button") || error.equals("amps") || error.equals("temp")) //|| error.equals("button released"))
   {
     lastDownOpTime = winchCurrentOpTimeD - winchStartTimeD;
   }
@@ -1004,7 +1043,9 @@ void runDelay()
     lastDownOpTime = 0;
   }
 
+  return error;
 }
+
 
 /*
    FUNCTION: Measures the current of the winches. Eventually incorporated into moveLeftWinch or moveRightWinch while statement
@@ -1031,3 +1072,17 @@ double measureBrdTemp()
   double temp = sensorValue / 10.0;
   return convertTempToF(temp);
 }
+
+void updateLidStates()
+{
+  if (currentHallSensorLBot == FRAMEISTHERE)
+  {
+    lidStateL = CLOSED;
+  }
+  else
+  {
+    lidStateL = OPEN;
+  }
+  lidStateR=lidStateL;
+}
+
